@@ -1,4 +1,5 @@
 import argparse
+
 import cv2
 import numpy as np
 import torch
@@ -11,7 +12,7 @@ from vedadet.engines import build_engine
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train a detector')
+    parser = argparse.ArgumentParser(description='Infer a detector')
     parser.add_argument('config', help='config file path')
     parser.add_argument('imgname', help='image file name')
 
@@ -25,8 +26,9 @@ def prepare(cfg):
     else:
         device = 'cpu'
     engine = build_engine(cfg.infer_engine)
-    engine.detector.to(device)
-    load_weights(engine.detector, cfg.weights.filepath)
+
+    engine.model.to(device)
+    load_weights(engine.model, cfg.weights.filepath)
 
     data_pipeline = Compose(cfg.data_pipeline)
     return engine, data_pipeline, device

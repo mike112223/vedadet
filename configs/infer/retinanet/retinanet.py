@@ -23,63 +23,78 @@ data_pipeline = [
 num_classes = 80
 strides = [8, 16, 32, 64, 128]
 use_sigmoid = True
-regress_ranges = ((-1, 64), (64, 128), (128, 256), (256, 512), (512, 10000))
+scales_per_octave = 3
+ratios = [0.5, 1.0, 2.0]
+num_anchors = scales_per_octave * len(ratios)
 
-detector = dict(
+model = dict(
     typename='SingleStageDetector',
     backbone=dict(
         typename='ResNet',
         depth=50,
         num_stages=4,
         out_indices=(0, 1, 2, 3),
-        frozen_stages=1,
-        norm_cfg=dict(typename='BN', requires_grad=True),
+        frozen_stages=1,  # TODO
+        norm_cfg=dict(
+            typename='BN',
+            requires_grad=True),  # TODO
         norm_eval=True,
-        style='pytorch'),
+        style='pytorch'),  # TODO
     neck=dict(
         typename='FPN',
         in_channels=[256, 512, 1024, 2048],
         out_channels=256,
         start_level=1,
-        add_extra_convs=True,
-        extra_convs_on_inputs=False,  # use P5
-        num_outs=5,
-        relu_before_extra_convs=True),
+        add_extra_convs='on_input',
+        num_outs=5),
     head=dict(
-        typename='FCOSHead',
+        typename='RetinaHead',
         num_classes=num_classes,
+        num_anchors=num_anchors,
         in_channels=256,
         stacked_convs=4,
         feat_channels=256,
-        strides=strides,
-        use_sigmoid=use_sigmoid,
-        norm_cfg=None))
+        use_sigmoid=use_sigmoid))
 
 # 3. engine
 meshgrid = dict(
-    typename='PointAnchorMeshGrid',
+    typename='BBoxAnchorMeshGrid',
     strides=strides,
-)
+    base_anchor=dict(
+        typename='BBoxBaseAnchor',
+        octave_base_scale=4,
+        scales_per_octave=scales_per_octave,
+        ratios=ratios,
+        base_sizes=strides))
 
+bbox_coder = dict(
+    typename='DeltaXYWHBBoxCoder',
+    target_means=[.0, .0, .0, .0],
+    target_stds=[1.0, 1.0, 1.0, 1.0])
+
+## infer engine
 infer_engine = dict(
     typename='InferEngine',
-    detector=detector,
+    model=model,
     meshgrid=meshgrid,
     converter=dict(
-        typename='PointAnchorConverter',
+        typename='BBoxAnchorConverter',
         num_classes=num_classes,
+        bbox_coder=bbox_coder,
         nms_pre=1000,
         use_sigmoid=use_sigmoid),
     num_classes=num_classes,
     test_cfg=dict(
         min_bbox_size=0,
-        score_thr=0.5,
-        nms=dict(typename='nms', iou_thr=0.5),
+        score_thr=0.6,
+        nms=dict(
+            typename='nms',
+            iou_thr=0.5),
         max_per_img=100),
     use_sigmoid=use_sigmoid)
 
 # 4. weights
-weights = dict(filepath='workdir/fcos/epoch_12_weights.pth')
+weights = dict(filepath='retinanet_r50.pth')
 
 # 5. show
 class_names = ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',

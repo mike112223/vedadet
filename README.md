@@ -13,7 +13,7 @@ vedadet is a single stage object detector toolbox based on PyTorch.
  
 - **Friendly to TensorRT**
   
-  Detectors can be easily converter to TensorRT engine.
+  Detectors can be easily converted to TensorRT engine.
   
 - **Easy to deploy**
   
@@ -72,54 +72,68 @@ pip install -v -e .
 
 a. Config
 
-Modify some configuration accordingly in the config file like `configs/trainval/retinanet.py`
+Modify some configuration accordingly in the config file like `configs/trainval/retinanet/retinanet.py`
 
 b. Multi-GPUs training
 ```shell
-tools/dist_trainval.sh configs/trainval/retinanet.py "0,1"
+tools/dist_trainval.sh configs/trainval/retinanet/retinanet.py "0,1"
 ```
 
 c. Single GPU training
 ```shell
-python tools/trainval.py configs/trainval/retinanet.py
+CUDA_VISIBLE_DEVICES="0" python tools/trainval.py configs/trainval/retinanet/retinanet.py
 ```
 
 ## Test
 
 a. Config
-Modify some configuration accordingly in the config file like `configs/trainval/retinanet.py`
+
+Modify some configuration accordingly in the config file like `configs/trainval/retinanet/retinanet.py`
 
 b. Test
 ```shell
-python tools/trainval.py configs/trainval/retinanet.py
+CUDA_VISIBLE_DEVICES="0" python tools/test.py configs/trainval/retinanet/retinanet.py weight_path
 ```
-
-Logs will be generated at `${vedadet_root}/workdir`.
 
 ## Inference
 
 a. Config
 
-Modify some configuration accordingly in the config file like `configs/trainval/retinanet.py`
+Modify some configuration accordingly in the config file like `configs/infer/retinanet/retinanet.py`
 
 b. Inference
 
 ```shell
-python tools/test.py configs/infer/retinanet.py image_path
+CUDA_VISIBLE_DEVICES="0" python tools/infer.py configs/infer/retinanet/retinanet.py image_path
 ```
 
 ## Deploy
-a. Convert to TensorRT engine
 
-To be done.
+a. Convert to Onnx
+
+Firstly, install volksdep following the [official instructions](https://github.com/Media-Smart/volksdep).
+
+Then, run the following code to convert PyTorch to Onnx. The input shape format is `CxHxW`. If you need the onnx model with constant input shape, please remove `--dynamic_shape` in the end.
+
+```shell
+CUDA_VISIBLE_DEVICES="0" python tools/torch2onnx.py configs/trainval/retinanet/retinanet.py weight_path out_path --dummy_input_shape 3,800,1344 --dynamic_shape
+```
+
+Here are some unsupported operations for model conversion.
+- GN
+- Deformable Conv
+
+Please see more details in [this](https://pytorch.org/docs/stable/onnx.html).
 
 b. Inference SDK
 
-To be done.
+Firstly, install flexinfer following the [official instructions](https://github.com/Media-Smart/flexinfer).
+
+Then, see the [example](https://github.com/Media-Smart/flexinfer/tree/master/examples/object_detection) for details.
 
 ## Contact
 
-This repository is currently maintained by Hongxiang Cai ([@hxcai](http://github.com/hxcai)), Yichao Xiong ([@mileistone](https://github.com/mileistone)).
+This repository is currently maintained by Hongxiang Cai ([@hxcai](http://github.com/hxcai)), Yichao Xiong ([@mileistone](https://github.com/mileistone)), Yanjia Zhu ([@mike112223](http://github.com/mike112223)).
 
 ## Credits
 We got a lot of code from [mmcv](https://github.com/open-mmlab/mmcv) and [mmdetection](https://github.com/open-mmlab/mmdetection), thanks to [open-mmlab](https://github.com/open-mmlab).
