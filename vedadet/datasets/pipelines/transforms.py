@@ -22,6 +22,177 @@ except ImportError:
 
 
 @registry.register_module('pipeline')
+class OverlapVideoCrop(object):
+    def __init__(self,
+                 window_size=256,
+                 overlap_ratio=0.5):
+        self.window_size = window_size
+        self.overlap_ratio = overlap_ratio
+        self.bbox2label = {
+            'gt_bboxes': 'gt_labels',
+            'gt_bboxes_ignore': 'gt_labels_ignore'
+        }
+
+    def __call__(self, results):
+
+        if 'window_size' not in results:
+            pass
+        else:
+            self.window_size = results['window_size']
+
+        imgs = results['img']
+        duration = results['img_info']['duration']
+
+        stride = int(self.window_size * (1 - self.overlap_ratio))
+        time = max(0, int(np.ceil(
+            (duration - self.window_size) / stride))) + 1
+
+        crop_imgs = []
+        for i in range(time):
+            crop_img = imgs[i * stride: i * stride + self.window_size]
+            crop_imgs.append(crop_img)
+
+        results['img'] = np.concatenate(crop_imgs, axis=0)
+        return results
+
+
+@registry.register_module('pipeline')
+class VideoRandomCrop(object):
+    def __init__(self,
+                 window_size=256,
+                 ignore_th=0.2):
+        self.window_size = window_size
+        self.ignore_th = ignore_th
+        self.bbox2label = {
+            'gt_bboxes': 'gt_labels',
+            'gt_bboxes_ignore': 'gt_labels_ignore'
+        }
+
+    def __call__(self, results):
+
+        if 'img_fields' in results:
+            assert results['img_fields'] == ['img'], \
+                'Only single img_fields is allowed'
+        assert 'bbox_fields' in results
+        bboxes = [results[key] for key in results['bbox_fields']]
+        bboxes = np.concatenate(bboxes, 0)
+
+        imgs = results['img']
+        duration = results['img_info']['duration']
+        while True:
+            sample_position = int(max(1, duration - self.window_size))
+            start_idx = random.randint(0, sample_position)
+
+            patch = np.array([start_idx, start_idx + self.window_size])
+
+            def filter_bboxes(bboxes, patch):
+                lens = bboxes[:, 1] - bboxes[:, 0]
+
+                x1s = bboxes[:, 0]
+                x2s = bboxes[:, 1]
+                x1, x2 = patch
+
+                ss = np.maximum(x1s, x1)
+                es = np.minimum(x2s, x2)
+
+                unions = es - ss
+                iofs = np.maximum(0, unions) / lens
+                # print(iofs, unions)
+                mask = np.logical_or((iofs >= self.ignore_th), (unions == self.window_size))
+                # TODO: ignore
+                ignore_mask = (iofs < self.ignore_th) * (iofs > 0)
+
+                return mask, ignore_mask
+
+            mask, ignore_mask = filter_bboxes(bboxes, patch)
+            if mask.sum() == 0:
+                continue
+
+            for key in results.get('bbox_fields', []):
+                boxes = results[key].copy()
+                mask, _ = filter_bboxes(boxes, patch)
+                boxes = boxes[mask]
+
+                boxes[:, 0] = boxes[:, 0].clip(min=patch[0])
+                boxes[:, 1] = boxes[:, 1].clip(max=patch[1])
+                boxes -= patch[0]
+
+                results[key] = boxes
+                # labels
+                label_key = self.bbox2label.get(key)
+                if label_key in results:
+                    results[label_key] = results[label_key][mask]
+
+            # adjust the img no matter whether the gt is empty before crop
+            imgs = imgs[patch[0]:patch[1]]
+            results['img'] = imgs
+            results['img_shape'] = imgs.shape
+
+            # import cv2
+            # for i in range(256):
+            #     cv2.imwrite(f'{i}c.jpg', imgs[i])
+
+            return results
+
+
+@registry.register_module('pipeline')
+class Pad3d(object):
+    """Pad the image.
+
+    There are two padding modes: (1) pad to a fixed size and (2) pad to the
+    minimum size that is divisible by some number.
+    Added keys are "pad_shape", "pad_fixed_size", "pad_size_divisor",
+
+    Args:
+        size (tuple, optional): Fixed padding size.
+        size_divisor (int, optional): The divisor of padded size.
+        pad_val (float, optional): Padding value, 0 by default.
+    """
+
+    def __init__(self, size_divisor=None, pad_val=0):
+        self.size_divisor = size_divisor
+        self.pad_val = pad_val
+        # only one of size and size_divisor should be valid
+        assert size_divisor is not None
+
+    def _pad_img(self, results):
+        """Pad images according to ``self.size``."""
+        for key in results.get('img_fields', ['img']):
+            img = results[key]
+            pad_t = int(np.ceil(
+                img.shape[0] / self.size_divisor)) * self.size_divisor - img.shape[0]
+            if pad_t > 0:
+                padded_img = np.pad(
+                    img, ((0, pad_t), (0, 0), (0, 0), (0, 0)),
+                    'constant', constant_values=self.pad_val)
+            else:
+                padded_img = img
+            results[key] = padded_img
+
+        results['pad_shape'] = padded_img.shape
+        results['pad_size_divisor'] = self.size_divisor
+
+    def __call__(self, results):
+        """Call function to pad images.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Updated result dict.
+        """
+        self._pad_img(results)
+        return results
+
+    def __repr__(self):
+        repr_str = self.__class__.__name__
+        repr_str += f'(size={self.size}, '
+        repr_str += f'size_divisor={self.size_divisor}, '
+        repr_str += f'pad_val={self.pad_val})'
+        return repr_str
+
+
+@registry.register_module('pipeline')
 class Resize(object):
     """Resize images & bbox.
 
@@ -253,6 +424,58 @@ class Resize(object):
 
 
 @registry.register_module('pipeline')
+class RandomFlip3d(object):
+    """Flip the image & bbox.
+
+    If the input dict contains the key "flip", then the flag will be used,
+    otherwise it will be randomly decided by a ratio specified in the init
+    method.
+
+    Args:
+        flip_ratio (float, optional): The flipping probability. Default: None.
+        direction(str, optional): The flipping direction. Options are
+            'horizontal' and 'vertical'. Default: 'horizontal'.
+    """
+
+    def __init__(self, flip_ratio=0, direction='horizontal'):
+        self.flip_ratio = flip_ratio
+        self.direction = direction
+        if flip_ratio is not None:
+            assert flip_ratio >= 0 and flip_ratio <= 1
+        assert direction in ['horizontal', 'vertical']
+
+    def __call__(self, results):
+        """Call function to flip bounding boxes.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Flipped results, 'flip', 'flip_direction' keys are added into
+                result dict.
+        """
+
+        if 'flip' not in results:
+            flip = True if np.random.rand() < self.flip_ratio else False
+            results['flip'] = flip
+        if 'flip_direction' not in results:
+            results['flip_direction'] = self.direction
+        if results['flip']:
+            # flip image
+            for key in results.get('img_fields', ['img']):
+                assert self.direction in ['horizontal', 'vertical']
+                if self.direction == 'horizontal':
+                    results[key] = np.flip(results[key], axis=2)
+                else:
+                    results[key] = np.flip(results[key], axis=1)
+
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__ + f'(flip_ratio={self.flip_ratio})'
+
+
+@registry.register_module('pipeline')
 class RandomFlip(object):
     """Flip the image & bbox.
 
@@ -427,6 +650,46 @@ class Normalize(object):
         repr_str = self.__class__.__name__
         repr_str += f'(mean={self.mean}, std={self.std}, to_rgb={self.to_rgb})'
         return repr_str
+
+
+@registry.register_module('pipeline')
+class Normalize3d(object):
+    """Normalize the image.
+
+    Added key is "img_norm_cfg".
+
+    Args:
+        mean (sequence): Mean values of 3 channels.
+        std (sequence): Std values of 3 channels.
+        to_rgb (bool): Whether to convert the image from BGR to RGB,
+            default is true.
+    """
+
+    def __init__(self, mean, std, to_rgb=True):
+        self.mean = np.array(mean, dtype=np.float32)
+        self.std = np.array(std, dtype=np.float32)
+        self.to_rgb = to_rgb
+        self.channel = len(mean)
+
+    def __call__(self, results):
+
+        for key in results.get('img_fields', ['img']):
+            img = results[key]
+            mean = np.reshape(np.array(self.mean, dtype=img.dtype),
+                              [self.channel])
+            std = np.reshape(np.array(self.std, dtype=img.dtype), [self.channel])
+            denominator = np.reciprocal(std, dtype=img.dtype)
+
+            new_img = (img - mean) * denominator
+            results[key] = new_img
+
+        # import cv2
+        # for i in range(256):
+        #     cv2.imwrite(f'{i}.jpg', new_img[i].astype(np.uint8))
+
+        results['img_norm_cfg'] = dict(
+            mean=self.mean, std=self.std, to_rgb=self.to_rgb)
+        return results
 
 
 @registry.register_module('pipeline')

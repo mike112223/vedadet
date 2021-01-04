@@ -33,6 +33,7 @@ class SingleStageDetector(BaseDetector):
 
     def forward_impl(self, x):
         feats = self.backbone(x)
+
         if self.neck:
             feats = self.neck(feats)
         feats = self.bbox_head(feats)

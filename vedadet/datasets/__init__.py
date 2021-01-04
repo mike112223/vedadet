@@ -6,10 +6,11 @@ from .dataset_wrappers import (ClassBalancedDataset, ConcatDataset,
 from .samplers import DistributedGroupSampler, DistributedSampler, GroupSampler
 from .widerface import WIDERFaceDataset
 from .xml_style import XMLDataset
+from .rawframe import RawFrameDataset
 
 __all__ = [
     'CustomDataset', 'CocoDataset', 'XMLDataset', 'WIDERFaceDataset',
     'GroupSampler', 'DistributedGroupSampler', 'DistributedSampler',
     'build_dataloader', 'ConcatDataset', 'RepeatDataset',
-    'ClassBalancedDataset', 'build_dataset'
+    'ClassBalancedDataset', 'build_dataset', 'RawFrameDataset'
 ]
