@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 from vedacore.misc import registry
@@ -10,7 +12,7 @@ from .base_engine import BaseEngine
 class TemporalInferEngine(BaseEngine):
 
     def __init__(self, model, meshgrid, converter, num_classes, window_size,
-                 overlap_ratio, use_sigmoid, test_cfg):
+                 overlap_ratio, use_sigmoid, test_cfg, max_batch, level):
         super().__init__(model)
         self.meshgrid = build_meshgrid(meshgrid)
         self.converter = build_converter(converter)
@@ -21,14 +23,32 @@ class TemporalInferEngine(BaseEngine):
         self.window_size = window_size
         self.stride = int(window_size * (1 - overlap_ratio))
         self.test_cfg = test_cfg
+        self.max_batch = max_batch
+        self.level = level
 
     def extract_feats(self, img):
-        n, c, t, h, w = img.shape
-        img = img.permute(0, 2, 1, 3, 4).reshape(
-            -1, self.window_size, c, h, w).permute(0, 2, 1, 3, 4)
-
         feats = self.model(img, train=False)
         return feats
+
+    # def extract_feats(self, img):
+    #     n, c, t, h, w = img.shape
+    #     img = img.permute(0, 2, 1, 3, 4).reshape(
+    #         -1, self.window_size, c, h, w).permute(0, 2, 1, 3, 4)
+    #     print(img.shape)
+
+    #     cls_scores, bbox_preds = [], []
+    #     for i in range(math.ceil(img.shape[0] / self.max_batch)):
+    #         cls_score, bbox_pred = self.model(
+    #             img[i * self.max_batch:(i + 1) * self.max_batch], train=False)
+
+    #         for c, b in zip(cls_score, bbox_pred):
+    #             cls_scores.append(c)
+    #             bbox_preds.append(b)
+
+    #     cls_scores = [torch.cat(cls_scores[i::self.level]) for i in range(self.level)]
+    #     bbox_preds = [torch.cat(bbox_preds[i::self.level]) for i in range(self.level)]
+
+    #     return cls_scores, bbox_preds
 
     def _get_raw_dets(self, img, img_metas):
         """
@@ -39,6 +59,7 @@ class TemporalInferEngine(BaseEngine):
             dets(list): len(dets) is the batch size, len(dets[ii]) = #classes,
                 dets[ii][jj] is an np.array whose shape is N*5
         """
+
         feats = self.extract_feats(img)
 
         featmap_sizes = [feat.shape[-1] for feat in feats[0]]
@@ -60,7 +81,16 @@ class TemporalInferEngine(BaseEngine):
             dets(list): len(dets) is the batch size, len(dets[ii]) = #classes,
                 dets[ii][jj] is an np.array whose shape is N*5
         """
-        dets = self._get_raw_dets(img, img_metas)
+        n, c, t, h, w = img.shape
+        img = img.permute(0, 2, 1, 3, 4).reshape(
+            -1, self.window_size, c, h, w).permute(0, 2, 1, 3, 4)
+        print(img.shape, math.ceil(img.shape[0] / self.max_batch))
+        dets = []
+        for i in range(math.ceil(img.shape[0] / self.max_batch)):
+            clip_img = img[i * self.max_batch:(i + 1) * self.max_batch]
+            det = self._get_raw_dets(clip_img, img_metas)
+
+        dets.extend(det)
         batch_size = len(dets)
 
         result_list = []

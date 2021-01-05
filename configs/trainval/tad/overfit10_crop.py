@@ -1,6 +1,6 @@
 # 1. data
 dataset_type = 'RawFrameDataset'
-data_root = 'data/ssd_thumos14/'
+data_root = 'data/thumos14/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 size_divisor = 128
@@ -12,8 +12,8 @@ data = dict(
     workers_per_gpu=4,
     train=dict(
         typename=dataset_type,
-        ann_file=data_root + 'annotations_thumos14_20cls_val.json',
-        img_prefix=data_root + 'resized_data_96_160/images/val',
+        ann_file=data_root + 'annotations_thumos14_mini_val_10.json',
+        img_prefix=data_root + 'extracted_images/images_10fps_resize_96_160/val',
         pipeline=[
             dict(typename='LoadVideoFromRepo',
                  to_float32=True),
@@ -38,8 +38,8 @@ data = dict(
     val_workers_per_gpu=1,
     val=dict(
         typename=dataset_type,
-        ann_file=data_root + 'annotations_thumos14_20cls_test.json',
-        img_prefix=data_root + 'resized_data_96_160/images/test',
+        ann_file=data_root + 'annotations_thumos14_mini_val_10.json',
+        img_prefix=data_root + 'extracted_images/images_10fps_resize_96_160/val',
         pipeline=[
             dict(typename='LoadVideoFromRepo',
                  to_float32=True),
@@ -176,7 +176,7 @@ val_engine = dict(
             typename='nms',
             iou_thr=0.5),
         max_per_img=100),
-    max_batch=1,
+    max_batch=6,
     level=5,
     use_sigmoid=use_sigmoid,
     eval_metric=None)
@@ -186,18 +186,18 @@ hooks = [
     dict(typename='OptimizerHook'),
     dict(
         typename='StepLrSchedulerHook',
-        step=[70, 90]),
+        step=[160, 220]),
     dict(typename='EvalHook'),
     dict(
         typename='SnapshotHook',
-        interval=1),
+        interval=10),
     dict(
         typename='LoggerHook',
-        interval=10)]
+        interval=1)]
 
 # 5. work modes
-modes = ['train']
-max_epochs = 100
+modes = ['train'] * 10 + ['val']
+max_epochs = 240
 
 # 6. checkpoint
 weights = dict(

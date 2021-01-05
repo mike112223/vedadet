@@ -48,7 +48,8 @@ data = dict(
                 flip=False,
                 transforms=[
                     dict(typename='OverlapVideoCrop',
-                         overlap_ratio=overlap_ratio),
+                         overlap_ratio=overlap_ratio,
+                         test_mode=True),
                     dict(typename='RandomFlip3d'),
                     dict(
                         typename='Normalize3d',
@@ -174,6 +175,8 @@ val_engine = dict(
             typename='nms',
             iou_thr=0.5),
         max_per_img=100),
+    max_batch=6,
+    level=5,
     use_sigmoid=use_sigmoid,
     eval_metric=None)
 
@@ -192,7 +195,7 @@ hooks = [
         interval=1)]
 
 # 5. work modes
-modes = ['train'] * 10 + ['val']
+modes = ['train'] * 1 + ['val']
 max_epochs = 240
 
 # 6. checkpoint
@@ -205,3 +208,4 @@ weights = dict(
 seed = 1234
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
+find_unused_parameters = True

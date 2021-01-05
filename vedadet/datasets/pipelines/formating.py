@@ -251,6 +251,8 @@ class DefaultFormatBundle3d(object):
     - gt_bboxes_ignore: (1)to tensor, (2)to DataContainer
     - gt_labels: (1)to tensor, (2)to DataContainer
     """
+    def __init__(self, img_to_gpu=True):
+        self.img_to_gpu = img_to_gpu
 
     def __call__(self, results):
         """Call function to transform and format common fields in results.
@@ -271,7 +273,8 @@ class DefaultFormatBundle3d(object):
                 img = np.expand_dims(img, -1)
 
             img = np.ascontiguousarray(img.transpose(3, 0, 1, 2))
-            results['img'] = DC(to_tensor(img), stack=True, pad_dims=3)
+            results['img'] = DC(to_tensor(img), cpu_only=not self.img_to_gpu,
+                                stack=True, pad_dims=3)
         for key in ['proposals', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels']:
             if key not in results:
                 continue

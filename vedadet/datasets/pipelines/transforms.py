@@ -25,9 +25,11 @@ except ImportError:
 class OverlapVideoCrop(object):
     def __init__(self,
                  window_size=256,
-                 overlap_ratio=0.5):
+                 overlap_ratio=0.5,
+                 test_mode=False):
         self.window_size = window_size
         self.overlap_ratio = overlap_ratio
+        self.test_mode = test_mode
         self.bbox2label = {
             'gt_bboxes': 'gt_labels',
             'gt_bboxes_ignore': 'gt_labels_ignore'
@@ -47,12 +49,36 @@ class OverlapVideoCrop(object):
         time = max(0, int(np.ceil(
             (duration - self.window_size) / stride))) + 1
 
-        crop_imgs = []
-        for i in range(time):
-            crop_img = imgs[i * stride: i * stride + self.window_size]
-            crop_imgs.append(crop_img)
+        if self.test_mode:
+            crop_imgs = []
+            for i in range(time):
+                crop_img = imgs[i * stride: i * stride + self.window_size]
+                crop_imgs.append(crop_img)
 
-        results['img'] = np.concatenate(crop_imgs, axis=0)
+            results['img'] = np.concatenate(crop_imgs, axis=0)
+        else:
+            c = np.random.randint(time)
+            patch = np.array([c * stride, min(duration, c * stride + self.window_size)])
+            # print(c, patch)
+
+            for key in results.get('bbox_fields', []):
+                boxes = results[key].copy()
+                boxes[:, 0] = boxes[:, 0].clip(min=patch[0])
+                boxes[:, 1] = boxes[:, 1].clip(max=patch[1])
+                boxes -= patch[0]
+                mask = boxes[:, 1] > boxes[:, 0]
+
+                results[key] = boxes[mask]
+                # labels
+                label_key = self.bbox2label.get(key)
+                if label_key in results:
+                    results[label_key] = results[label_key][mask]
+
+            # adjust the img no matter whether the gt is empty before crop
+            imgs = imgs[patch[0]:patch[1]]
+            results['img'] = imgs
+            results['img_shape'] = imgs.shape
+
         return results
 
 
@@ -83,7 +109,7 @@ class VideoRandomCrop(object):
             sample_position = int(max(1, duration - self.window_size))
             start_idx = random.randint(0, sample_position)
 
-            patch = np.array([start_idx, start_idx + self.window_size])
+            patch = np.array([start_idx, min(duration, start_idx + self.window_size)])
 
             def filter_bboxes(bboxes, patch):
                 lens = bboxes[:, 1] - bboxes[:, 0]

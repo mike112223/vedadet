@@ -10,7 +10,7 @@ data = dict(
     workers_per_gpu=3,
     train=dict(
         typename=dataset_type,
-        ann_file=data_root + 'annotations/instances_train2017.json',
+        ann_file='data/test.json',
         img_prefix=data_root + 'train2017/',
         pipeline=[
             dict(typename='LoadImageFromFile'),
@@ -34,10 +34,12 @@ data = dict(
             dict(
                 typename='Collect',
                 keys=['img', 'gt_bboxes', 'gt_labels'])]),
+    val_samples_per_gpu=1,
+    val_workers_per_gpu=1,
     val=dict(
         typename=dataset_type,
-        ann_file=data_root + 'annotations/instances_val2017.json',
-        img_prefix=data_root + 'val2017/',
+        ann_file='data/test.json',
+        img_prefix=data_root + 'train2017/',
         pipeline=[
             dict(typename='LoadImageFromFile'),
             dict(

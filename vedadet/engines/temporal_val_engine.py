@@ -6,9 +6,10 @@ from .temporal_infer_engine import TemporalInferEngine
 class TemporalValEngine(TemporalInferEngine):
 
     def __init__(self, model, meshgrid, converter, num_classes, window_size,
-                 overlap_ratio, use_sigmoid, test_cfg, eval_metric):
+                 overlap_ratio, use_sigmoid, test_cfg, max_batch, level,
+                 eval_metric):
         super().__init__(model, meshgrid, converter, num_classes, window_size,
-                         overlap_ratio, use_sigmoid, test_cfg)
+                         overlap_ratio, use_sigmoid, test_cfg, max_batch, level)
         self.eval_metric = eval_metric
 
     def forward(self, data):
