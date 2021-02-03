@@ -409,6 +409,7 @@ class ResNet3dCpNet(nn.Module):
                  zero_init_residual=True,
                  temporal_layer=4,
                  temporal_out_channels=256,
+                 cp_norm=dict(typename='BN1d'),
                  **kwargs):
         super().__init__()
         if depth not in self.arch_settings:
@@ -495,7 +496,7 @@ class ResNet3dCpNet(nn.Module):
                     dilation=1,
                     bias=False,
                     conv_cfg=dict(typename='Conv1d'),
-                    norm_cfg=dict(typename='BN1d'),
+                    norm_cfg=cp_norm,
                     act_cfg=dict(typename='ReLU', inplace=True))
             )
             in_channels = out_channels

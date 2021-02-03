@@ -1,6 +1,6 @@
 # 1. data
 dataset_type = 'RawFrameDataset'
-data_root = 'data/thumos14/'
+data_root = 'data/ssd_thumos14/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 size_divisor = 128
@@ -13,14 +13,15 @@ data = dict(
     train=dict(
         typename=dataset_type,
         ann_file=data_root + 'annotations_thumos14_20cls_val.json',
-        img_prefix=data_root + 'extracted_images/images_10fps_resize_96_160/val',
+        img_prefix=data_root + 'resized_data_96_160/images/val',
         pipeline=[
             dict(typename='LoadVideoFromRepo',
                  to_float32=True),
             dict(
                 typename='LoadAnnotations'),
-            dict(typename='VideoRandomCrop',
-                 window_size=window_size),
+            dict(typename='OverlapVideoCrop',
+                 window_size=window_size,
+                 overlap_ratio=overlap_ratio),
             dict(
                 typename='Normalize3d',
                 **img_norm_cfg),
@@ -38,7 +39,7 @@ data = dict(
     val=dict(
         typename=dataset_type,
         ann_file=data_root + 'annotations_thumos14_20cls_test.json',
-        img_prefix=data_root + 'extracted_images/images_10fps_resize_96_160/test',
+        img_prefix=data_root + 'resized_data_96_160/images/test',
         pipeline=[
             dict(typename='LoadVideoFromRepo',
                  to_float32=True),
@@ -48,7 +49,8 @@ data = dict(
                 flip=False,
                 transforms=[
                     dict(typename='OverlapVideoCrop',
-                         overlap_ratio=overlap_ratio),
+                         overlap_ratio=overlap_ratio,
+                         test_mode=True),
                     dict(typename='RandomFlip3d'),
                     dict(
                         typename='Normalize3d',
@@ -77,7 +79,7 @@ num_anchors = scales_per_octave * len(ratios)
 model = dict(
     typename='SingleStageDetector',
     backbone=dict(
-        typename='ResNet3dCpNet',
+        typename='ResNet3d',
         depth=50,
         conv_cfg=dict(typename='Conv3d'),
         norm_eval=True,
@@ -86,12 +88,19 @@ model = dict(
         inflate=(
             (1, 1, 1), (1, 0, 1, 0), (1, 0, 1, 0, 1, 0), (0, 1, 0)),
         zero_init_residual=False),  # TODO
-    neck=dict(
-        typename='TFPN',
-        in_channels=[2048, 256, 256, 256, 256],
-        out_channels=256,
-        start_level=0,
-        num_outs=5),
+    neck=[
+        dict(
+            typename='CPNet',
+            in_channels=2048,
+            num_levels=4,
+        ),
+        dict(
+            typename='TFPN',
+            in_channels=[2048, 256, 256, 256, 256],
+            out_channels=256,
+            start_level=0,
+            num_outs=5)
+    ],
     head=dict(
         typename='TemporalRetinaHead',
         num_classes=num_classes,
@@ -174,6 +183,8 @@ val_engine = dict(
             typename='nms',
             iou_thr=0.5),
         max_per_img=100),
+    max_batch=1,
+    level=5,
     use_sigmoid=use_sigmoid,
     eval_metric=None)
 
@@ -182,17 +193,17 @@ hooks = [
     dict(typename='OptimizerHook'),
     dict(
         typename='StepLrSchedulerHook',
-        step=[60, 80]),
+        step=[70, 90]),
     dict(typename='EvalHook'),
     dict(
         typename='SnapshotHook',
-        interval=10),
+        interval=1),
     dict(
         typename='LoggerHook',
         interval=10)]
 
 # 5. work modes
-modes = ['train'] * 1 + ['val']
+modes = ['train']
 max_epochs = 100
 
 # 6. checkpoint

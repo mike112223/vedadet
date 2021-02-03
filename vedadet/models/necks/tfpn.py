@@ -2,6 +2,7 @@
 # https://github.com/open-mmlab/mmdetection
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.batchnorm import _BatchNorm
 
 from vedacore.misc import registry
 from vedacore.modules import ConvModule, xavier_init
@@ -68,6 +69,7 @@ class TFPN(nn.Module):
                  num_outs,
                  start_level=0,
                  end_level=-1,
+                 add_extra_bottom_convs=False,
                  add_extra_convs=False,
                  extra_convs_on_inputs=True,
                  relu_before_extra_convs=False,
@@ -75,7 +77,9 @@ class TFPN(nn.Module):
                  conv_cfg=dict(typename='Conv1d'),
                  norm_cfg=dict(typename='BN1d'),
                  act_cfg=None,
-                 upsample_cfg=dict(mode='nearest')):
+                 upsample_cfg=dict(mode='nearest'),
+                 norm_eval=False,
+                 norm_freeze=False):
         super(TFPN, self).__init__()
         assert isinstance(in_channels, list)
         self.in_channels = in_channels
@@ -86,6 +90,8 @@ class TFPN(nn.Module):
         self.no_norm_on_lateral = no_norm_on_lateral
         self.fp16_enabled = False
         self.upsample_cfg = upsample_cfg.copy()
+        self.norm_eval = norm_eval
+        self.norm_freeze = norm_freeze
 
         if end_level == -1:
             self.backbone_end_level = self.num_ins
@@ -109,6 +115,12 @@ class TFPN(nn.Module):
                 self.add_extra_convs = 'on_input'
             else:
                 self.add_extra_convs = 'on_output'
+
+        self.add_extra_bottom_convs = add_extra_bottom_convs
+        assert isinstance(add_extra_bottom_convs, (str, bool))
+        if isinstance(add_extra_bottom_convs, str):
+            # Extra_convs_source choices: 'on_input', 'on_lateral', 'on_output'
+            assert add_extra_bottom_convs == 'on_input'
 
         self.lateral_convs = nn.ModuleList()
         self.fpn_convs = nn.ModuleList()
@@ -155,6 +167,19 @@ class TFPN(nn.Module):
                     inplace=False)
                 self.fpn_convs.append(extra_fpn_conv)
 
+        if self.add_extra_bottom_convs:
+            in_channels = self.in_channels[0]
+            self.bottom_fpn_conv = ConvModule(
+                in_channels,
+                out_channels,
+                3,
+                padding=1,
+                conv_cfg=conv_cfg,
+                norm_cfg=norm_cfg,
+                act_cfg=act_cfg,
+                inplace=False)
+
+
     # default init_weights for conv(msra) and norm in ConvModule
     def init_weights(self):
         """Initialize the weights of FPN module."""
@@ -164,6 +189,17 @@ class TFPN(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 xavier_init(m, distribution='uniform')
+
+    def train(self, mode=True):
+        """Set the optimization status when training."""
+        super().train(mode)
+        if mode and self.norm_eval:
+            for m in self.modules():
+                if isinstance(m, _BatchNorm):
+                    m.eval()
+                    if self.norm_freeze:
+                        for param in m.parameters():
+                            param.requires_grad = False
 
     def forward(self, inputs):
         """Forward function."""
@@ -219,4 +255,9 @@ class TFPN(nn.Module):
                         outs.append(self.fpn_convs[i](F.relu(outs[-1])))
                     else:
                         outs.append(self.fpn_convs[i](outs[-1]))
+
+        if self.add_extra_bottom_convs:
+            extra_source = F.interpolate(inputs[0], scale_factor=2, **self.upsample_cfg)
+            outs.insert(0, self.bottom_fpn_conv(extra_source))
+
         return tuple(outs)

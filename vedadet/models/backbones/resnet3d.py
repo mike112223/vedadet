@@ -30,11 +30,11 @@ class BasicBlock3d(nn.Module):
             block. Default: False.
         non_local_cfg (dict): Config for non-local module. Default: ``dict()``.
         conv_cfg (dict): Config dict for convolution layer.
-            Default: ``dict(type='Conv3d')``.
-        norm_cfg (dict): Config for norm layers. required keys are ``type``,
-            Default: ``dict(type='BN3d')``.
+            Default: ``dict(typename='Conv3d')``.
+        norm_cfg (dict): Config for norm layers. required keys are ``typename``,
+            Default: ``dict(typename='BN3d')``.
         act_cfg (dict): Config dict for activation layer.
-            Default: ``dict(type='ReLU')``.
+            Default: ``dict(typename='ReLU')``.
         with_cp (bool): Use checkpoint or not. Using checkpoint will save some
             memory while slowing down the training speed. Default: False.
     """
@@ -52,9 +52,9 @@ class BasicBlock3d(nn.Module):
                  inflate_style='3x1x1',
                  non_local=False,
                  non_local_cfg=dict(),
-                 conv_cfg=dict(type='Conv3d'),
-                 norm_cfg=dict(type='BN3d'),
-                 act_cfg=dict(type='ReLU'),
+                 conv_cfg=dict(typename='Conv3d'),
+                 norm_cfg=dict(typename='BN3d'),
+                 act_cfg=dict(typename='ReLU'),
                  with_cp=False):
         super().__init__()
         assert style in ['pytorch', 'caffe']
@@ -172,11 +172,11 @@ class Bottleneck3d(nn.Module):
             block. Default: False.
         non_local_cfg (dict): Config for non-local module. Default: ``dict()``.
         conv_cfg (dict): Config dict for convolution layer.
-            Default: ``dict(type='Conv3d')``.
-        norm_cfg (dict): Config for norm layers. required keys are ``type``,
-            Default: ``dict(type='BN3d')``.
+            Default: ``dict(typename='Conv3d')``.
+        norm_cfg (dict): Config for norm layers. required keys are ``typename``,
+            Default: ``dict(typename='BN3d')``.
         act_cfg (dict): Config dict for activation layer.
-            Default: ``dict(type='ReLU')``.
+            Default: ``dict(typename='ReLU')``.
         with_cp (bool): Use checkpoint or not. Using checkpoint will save some
             memory while slowing down the training speed. Default: False.
     """
@@ -194,9 +194,9 @@ class Bottleneck3d(nn.Module):
                  inflate_style='3x1x1',
                  non_local=False,
                  non_local_cfg=dict(),
-                 conv_cfg=dict(type='Conv3d'),
-                 norm_cfg=dict(type='BN3d'),
-                 act_cfg=dict(type='ReLU'),
+                 conv_cfg=dict(typename='Conv3d'),
+                 norm_cfg=dict(typename='BN3d'),
+                 act_cfg=dict(typename='ReLU'),
                  with_cp=False):
         super().__init__()
         assert style in ['pytorch', 'caffe']
@@ -354,13 +354,13 @@ class ResNet3d(nn.Module):
         inflate_style (str): ``3x1x1`` or ``1x1x1``. which determines the
             kernel sizes and padding strides for conv1 and conv2 in each block.
             Default: '3x1x1'.
-        conv_cfg (dict): Config for conv layers. required keys are ``type``
-            Default: ``dict(type='Conv3d')``.
-        norm_cfg (dict): Config for norm layers. required keys are ``type`` and
+        conv_cfg (dict): Config for conv layers. required keys are ``typename``
+            Default: ``dict(typename='Conv3d')``.
+        norm_cfg (dict): Config for norm layers. required keys are ``typename`` and
             ``requires_grad``.
-            Default: ``dict(type='BN3d', requires_grad=True)``.
+            Default: ``dict(typename='BN3d', requires_grad=True)``.
         act_cfg (dict): Config dict for activation layer.
-            Default: ``dict(type='ReLU', inplace=True)``.
+            Default: ``dict(typename='ReLU', inplace=True)``.
         norm_eval (bool): Whether to set BN layers to eval mode, namely, freeze
             running stats (mean and var). Default: False.
         with_cp (bool): Use checkpoint or not. Using checkpoint will save some
@@ -399,10 +399,11 @@ class ResNet3d(nn.Module):
                  frozen_stages=-1,
                  inflate=(1, 1, 1, 1),
                  inflate_style='3x1x1',
-                 conv_cfg=dict(type='Conv3d'),
-                 norm_cfg=dict(type='BN3d', requires_grad=True),
-                 act_cfg=dict(type='ReLU', inplace=True),
+                 conv_cfg=dict(typename='Conv3d'),
+                 norm_cfg=dict(typename='BN3d', requires_grad=True),
+                 act_cfg=dict(typename='ReLU', inplace=True),
                  norm_eval=False,
+                 norm_freeze=False,
                  with_cp=False,
                  non_local=(0, 0, 0, 0),
                  non_local_cfg=dict(),
@@ -436,6 +437,7 @@ class ResNet3d(nn.Module):
         self.norm_cfg = norm_cfg
         self.act_cfg = act_cfg
         self.norm_eval = norm_eval
+        self.norm_freeze = norm_freeze
         self.with_cp = with_cp
         self.zero_init_residual = zero_init_residual
 
@@ -712,7 +714,7 @@ class ResNet3d(nn.Module):
             torch.Tensor: The feature of the input
             samples extracted by the backbone.
         """
-        feats = {'c_ori': x}
+        # feats = {'c_ori': x}
 
         x = self.conv1(x)
         x = self.maxpool(x)
@@ -726,9 +728,11 @@ class ResNet3d(nn.Module):
                 x = self.avg_pool(x)
                 x = x.reshape(x.shape[:-2])
                 outs.append(x)
-        feats['c1'] = outs[0]
+        # feats['c1'] = outs[0]
 
-        return feats
+        return x
+
+        # return feats
         # if len(outs) == 1:
         #     return outs[0]
         # else:
@@ -742,3 +746,6 @@ class ResNet3d(nn.Module):
             for m in self.modules():
                 if isinstance(m, _BatchNorm):
                     m.eval()
+                    if self.norm_freeze:
+                        for param in m.parameters():
+                            param.requires_grad = False

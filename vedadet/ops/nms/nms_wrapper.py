@@ -151,11 +151,23 @@ def batched_nms(bboxes, scores, inds, nms_cfg, class_agnostic=False):
         offsets = inds.to(bboxes) * (max_coordinate + 1)
         bboxes_for_nms = bboxes + offsets[:, None]
     nms_type = nms_cfg_.pop('typename', 'nms')
+    cuda_th = nms_cfg_.pop('cuda_th', 1e5)
     nms_op = eval(nms_type)
-    dets, keep = nms_op(
-        torch.cat([bboxes_for_nms, scores[:, None]], -1), **nms_cfg_)
+
+    bboxes_for_nms = torch.cat([bboxes_for_nms, scores[:, None]], -1)
+    if bboxes_for_nms.shape[0] > cuda_th:
+        bboxes_for_nms = bboxes_for_nms.cpu().numpy()
+
+    dets, keep = nms_op(bboxes_for_nms, **nms_cfg_)
+
+    if isinstance(dets, np.ndarray):
+        dets = torch.from_numpy(dets).to(scores.device)
+        keep = torch.from_numpy(keep)
+
     bboxes = bboxes[keep]
     scores = dets[:, -1]
+
+    # print(bboxes, scores)
     return torch.cat([bboxes, scores[:, None]], -1), keep
 
 

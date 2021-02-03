@@ -56,6 +56,8 @@ class RawFrameDataset(CustomDataset):
         else:
             gt_bboxes_ignore = np.zeros((0, 2), dtype=np.float32)
 
+        assert(len(gt_bboxes) > 0)
+
         ann = dict(
             bboxes=gt_bboxes.astype(np.float32),
             labels=gt_labels.astype(np.int64),
@@ -73,7 +75,7 @@ class RawFrameDataset(CustomDataset):
                  jsonfile_prefix=None,
                  proposal_nums=(100, 300, 1000),
                  iou_thr=0.5,
-                 scale_ranges=None):
+                 scale_ranges=[(0, 5.66), (5.66, 9.79), (9.79, 100), (0, 100)]):
         """Evaluate the dataset.
 
         Args:
@@ -109,6 +111,9 @@ class RawFrameDataset(CustomDataset):
             ann['bboxes_ignore'] = pseudo_bbox(
                 ann['bboxes_ignore'], mode='numpy')
             annotations.append(ann)
+
+        # import pdb
+        # pdb.set_trace()
 
         eval_results = {}
         if metric == 'mAP':

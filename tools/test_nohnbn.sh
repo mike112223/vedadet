@@ -1,0 +1,11 @@
+python tools/test_nop.py configs/trainval/tad/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn.py workdir/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn/epoch_100_weights.pth 
+
+python tools/test_nop.py configs/trainval/tad/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn.py workdir/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn/epoch_200_weights.pth 
+
+python tools/test_nop.py configs/trainval/tad/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn.py workdir/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn/epoch_300_weights.pth 
+
+python tools/test_nop.py configs/trainval/tad/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn.py workdir/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn/epoch_400_weights.pth 
+
+python tools/test_nop.py configs/trainval/tad/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn.py workdir/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn/epoch_500_weights.pth 
+
+python tools/test_nop.py configs/trainval/tad/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn.py workdir/baseline_ssd_randomcrop_sgdr_fps25_flip_nohnbn/epoch_600_weights.pth 

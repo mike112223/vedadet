@@ -3,6 +3,7 @@
 import inspect
 import numpy as np
 from numpy import random
+import cv2
 
 import vedacore.image as image
 from vedacore.misc import is_list_of, is_str, registry
@@ -56,39 +57,67 @@ class OverlapVideoCrop(object):
                 crop_imgs.append(crop_img)
 
             results['img'] = np.concatenate(crop_imgs, axis=0)
+
+            return results
+
         else:
-            c = np.random.randint(time)
-            patch = np.array([c * stride, min(duration, c * stride + self.window_size)])
-            # print(c, patch)
+            while True:
+                # print('=='* 40)
+                c = np.random.randint(time)
+                patch = np.array([c * stride, min(duration, c * stride + self.window_size)])
+                # print(c, patch, duration)
 
-            for key in results.get('bbox_fields', []):
-                boxes = results[key].copy()
-                boxes[:, 0] = boxes[:, 0].clip(min=patch[0])
-                boxes[:, 1] = boxes[:, 1].clip(max=patch[1])
-                boxes -= patch[0]
-                mask = boxes[:, 1] > boxes[:, 0]
+                flag = False
+                for key in results.get('bbox_fields', []):
+                    boxes = results[key].copy()
+                    boxes[:, 0] = boxes[:, 0].clip(min=patch[0])
+                    boxes[:, 1] = boxes[:, 1].clip(max=patch[1])
+                    boxes -= patch[0]
+                    mask = boxes[:, 1] > boxes[:, 0]
 
-                results[key] = boxes[mask]
-                # labels
-                label_key = self.bbox2label.get(key)
-                if label_key in results:
-                    results[label_key] = results[label_key][mask]
+                    if key == 'gt_bboxes' and sum(mask) == 0:
+                        flag = True
+                        break
 
-            # adjust the img no matter whether the gt is empty before crop
-            imgs = imgs[patch[0]:patch[1]]
-            results['img'] = imgs
-            results['img_shape'] = imgs.shape
+                    results[key] = boxes[mask]
+                    # labels
+                    label_key = self.bbox2label.get(key)
+                    if label_key in results:
+                        results[label_key] = results[label_key][mask]
 
-        return results
+                if flag:
+                    continue
+
+                # adjust the img no matter whether the gt is empty before crop
+                imgs = imgs[patch[0]:patch[1]]
+                results['img'] = imgs
+                results['img_shape'] = imgs.shape
+
+                # print(imgs.shape)
+                # import cv2
+                # bbox = results['gt_bboxes']
+                # for i in range(len(bbox)):
+                #     x, y = bbox[i]
+                #     for j in range(int(x), int(y + 1)):
+                #         cv2.imwrite(f'{j}.jpg', imgs[j])
+
+                assert len(results['gt_bboxes']) > 0
+                # for k in results.keys():
+                #     if k != 'img':
+                #         print(k, results[k])
+
+                return results
 
 
 @registry.register_module('pipeline')
 class VideoRandomCrop(object):
     def __init__(self,
                  window_size=256,
-                 ignore_th=0.2):
+                 patch_iof_th=0,
+                 gt_iof_th=0):
         self.window_size = window_size
-        self.ignore_th = ignore_th
+        self.patch_iof_th = patch_iof_th
+        self.gt_iof_th = gt_iof_th
         self.bbox2label = {
             'gt_bboxes': 'gt_labels',
             'gt_bboxes_ignore': 'gt_labels_ignore'
@@ -122,21 +151,24 @@ class VideoRandomCrop(object):
                 es = np.minimum(x2s, x2)
 
                 unions = es - ss
-                iofs = np.maximum(0, unions) / lens
+                gt_iofs = np.maximum(0, unions) / lens
+                patch_iofs = np.maximum(0, unions) / (x2 - x1)
+
                 # print(iofs, unions)
-                mask = np.logical_or((iofs >= self.ignore_th), (unions == self.window_size))
+                mask = np.logical_or((gt_iofs > self.gt_iof_th),
+                                     (patch_iofs > self.patch_iof_th))
                 # TODO: ignore
-                ignore_mask = (iofs < self.ignore_th) * (iofs > 0)
+                # ignore_mask = (iofs < self.gt_iof_th) * (iofs > 0)
 
-                return mask, ignore_mask
+                return mask
 
-            mask, ignore_mask = filter_bboxes(bboxes, patch)
+            mask = filter_bboxes(bboxes, patch)
             if mask.sum() == 0:
                 continue
 
             for key in results.get('bbox_fields', []):
                 boxes = results[key].copy()
-                mask, _ = filter_bboxes(boxes, patch)
+                mask = filter_bboxes(boxes, patch)
                 boxes = boxes[mask]
 
                 boxes[:, 0] = boxes[:, 0].clip(min=patch[0])
@@ -157,6 +189,86 @@ class VideoRandomCrop(object):
             # import cv2
             # for i in range(256):
             #     cv2.imwrite(f'{i}c.jpg', imgs[i])
+
+            return results
+
+
+@registry.register_module('pipeline')
+class VideoRandomCropBeforeLoading(object):
+    def __init__(self,
+                 window_size=256,
+                 patch_iof_th=0,
+                 gt_iof_th=0,
+                 interval=1):
+        self.window_size = window_size
+        self.patch_iof_th = patch_iof_th
+        self.gt_iof_th = gt_iof_th
+        self.interval = interval
+        self.bbox2label = {
+            'gt_bboxes': 'gt_labels',
+            'gt_bboxes_ignore': 'gt_labels_ignore'
+        }
+
+    def __call__(self, results):
+
+        assert 'bbox_fields' in results
+        bboxes = [results[key] for key in results['bbox_fields']]
+        bboxes = np.concatenate(bboxes, 0)
+
+        duration = results['img_info']['duration']
+        while True:
+
+            interval = random.randint(1, self.interval + 1)
+            results['interval'] = interval
+
+            sample_position = int(max(1, duration - self.window_size * interval))
+            start_idx = random.randint(0, sample_position)
+
+            patch = np.array([start_idx, min(
+                duration, start_idx + self.window_size * interval)])
+            results['patch'] = list(patch)
+
+            def filter_bboxes(bboxes, patch):
+                lens = bboxes[:, 1] - bboxes[:, 0]
+
+                x1s = bboxes[:, 0]
+                x2s = bboxes[:, 1]
+                x1, x2 = patch
+
+                ss = np.maximum(x1s, x1)
+                es = np.minimum(x2s, x2)
+
+                unions = es - ss
+                gt_iofs = np.maximum(0, unions) / lens
+                patch_iofs = np.maximum(0, unions) / (x2 - x1)
+
+                # print(iofs, unions)
+                mask = np.logical_or((gt_iofs > self.gt_iof_th),
+                                     (patch_iofs > self.patch_iof_th))
+                # TODO: ignore
+                # ignore_mask = (iofs < self.gt_iof_th) * (iofs > 0)
+
+                return mask
+
+            mask = filter_bboxes(bboxes, patch)
+            if mask.sum() == 0:
+                continue
+
+            for key in results.get('bbox_fields', []):
+                boxes = results[key].copy()
+                mask = filter_bboxes(boxes, patch)
+                boxes = boxes[mask]
+
+                boxes[:, 0] = boxes[:, 0].clip(min=patch[0])
+                boxes[:, 1] = boxes[:, 1].clip(max=patch[1])
+                boxes -= patch[0]
+                boxes /= interval
+
+                results[key] = boxes
+                # labels
+                label_key = self.bbox2label.get(key)
+                if label_key in results:
+                    results[label_key] = results[label_key][mask]
 
             return results
 
@@ -215,6 +327,510 @@ class Pad3d(object):
         repr_str += f'(size={self.size}, '
         repr_str += f'size_divisor={self.size_divisor}, '
         repr_str += f'pad_val={self.pad_val})'
+        return repr_str
+
+
+@registry.register_module('pipeline')
+class Rotate3d(object):
+    """Normalize the image.
+
+    Added key is "img_norm_cfg".
+
+    Args:
+        mean (sequence): Mean values of 3 channels.
+        std (sequence): Std values of 3 channels.
+        to_rgb (bool): Whether to convert the image from BGR to RGB,
+            default is true.
+    """
+
+    def __init__(self, max_angle, p=0.5, 
+                 interpolation=cv2.INTER_LINEAR,
+                 border_mode=cv2.BORDER_REFLECT_101):
+        self.max_angle = max_angle
+        self.p = p
+        self.interpolation = interpolation
+        self.border_mode = border_mode
+
+    def __call__(self, results):
+
+        if random.uniform() < self.p:
+            for key in results.get('img_fields', ['img']):
+                img = results[key]
+                t, h, w, c = img.shape
+                angle = random.uniform(-self.max_angle, self.max_angle)
+                matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+
+                new_img = []
+                for i in range(t):
+                    _img = img[i]
+                    _img = cv2.warpAffine(
+                        _img, M=matrix, dsize=(w, h),
+                        flags=self.interpolation, borderMode=self.border_mode)
+                    new_img.append(_img)
+                results[key] = np.array(new_img)
+
+        return results
+
+
+@registry.register_module('pipeline')
+class Normalize3d(object):
+    """Normalize the image.
+
+    Added key is "img_norm_cfg".
+
+    Args:
+        mean (sequence): Mean values of 3 channels.
+        std (sequence): Std values of 3 channels.
+        to_rgb (bool): Whether to convert the image from BGR to RGB,
+            default is true.
+    """
+
+    def __init__(self, mean, std, to_rgb=True):
+        self.mean = np.array(mean, dtype=np.float32)
+        self.std = np.array(std, dtype=np.float32)
+        self.to_rgb = to_rgb
+        self.channel = len(mean)
+
+    def __call__(self, results):
+
+        for key in results.get('img_fields', ['img']):
+            img = results[key]
+            mean = np.reshape(np.array(self.mean, dtype=img.dtype),
+                              [self.channel])
+            std = np.reshape(np.array(self.std, dtype=img.dtype), [self.channel])
+            denominator = np.reciprocal(std, dtype=img.dtype)
+
+            new_img = (img - mean) * denominator
+            results[key] = new_img
+
+        # import cv2
+        # for i in range(256):
+        #     cv2.imwrite(f'{i}.jpg', new_img[i].astype(np.uint8))
+
+        results['img_norm_cfg'] = dict(
+            mean=self.mean, std=self.std, to_rgb=self.to_rgb)
+        return results
+
+
+@registry.register_module('pipeline')
+class Resize3d(object):
+    """Random crop the image & bboxes.
+
+    Args:
+        crop_size (tuple): Expected size after cropping, (h, w).
+        allow_negative_crop (bool): Whether to allow a crop that does not
+            contain any bbox area. Default to False.
+
+    Notes:
+        - If the image is smaller than the crop size, return the original image
+        - The keys for bboxes, labels must be aligned. That is,
+          `gt_bboxes` corresponds to `gt_labels`, and
+          `gt_bboxes_ignore` corresponds to `gt_labels_ignore`.
+        - If the crop does not contain any gt-bbox region and
+          `allow_negative_crop` is set to False, skip this image.
+    """
+
+    def __init__(self, size):
+        assert size[0] > 0 and size[1] > 0
+        self.size = size
+        # The key correspondence from bboxes to labels.
+
+    def __call__(self, results):
+        """Call function to randomly crop images, bounding boxes.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Randomly cropped results, 'img_shape' key in result dict is
+                updated according to crop size.
+        """
+        for key in results.get('img_fields', ['img']):
+            img = results[key]
+            t, h, w, c = img.shape
+            # print(img.shape)
+
+            new_img = []
+            for i in range(t):
+                _img = img[i]
+                _img = cv2.resize(_img, self.size)
+                new_img.append(_img)
+
+            img = np.array(new_img)
+            img_shape = img.shape
+            results[key] = img
+
+        #     print(results)
+
+        #     for i in range(768):
+        #         cv2.imwrite(f'{i}.jpg', img[i].astype(np.uint8))
+
+        # raise
+
+        results['img_shape'] = img_shape
+
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__ + f'(crop_size={self.crop_size})'
+
+
+@registry.register_module('pipeline')
+class RandomCrop3d(object):
+    """Random crop the image & bboxes.
+
+    Args:
+        crop_size (tuple): Expected size after cropping, (h, w).
+        allow_negative_crop (bool): Whether to allow a crop that does not
+            contain any bbox area. Default to False.
+
+    Notes:
+        - If the image is smaller than the crop size, return the original image
+        - The keys for bboxes, labels must be aligned. That is,
+          `gt_bboxes` corresponds to `gt_labels`, and
+          `gt_bboxes_ignore` corresponds to `gt_labels_ignore`.
+        - If the crop does not contain any gt-bbox region and
+          `allow_negative_crop` is set to False, skip this image.
+    """
+
+    def __init__(self, crop_size):
+        assert crop_size[0] > 0 and crop_size[1] > 0
+        self.crop_size = crop_size
+        # The key correspondence from bboxes to labels.
+
+    def __call__(self, results):
+        """Call function to randomly crop images, bounding boxes.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Randomly cropped results, 'img_shape' key in result dict is
+                updated according to crop size.
+        """
+
+        for key in results.get('img_fields', ['img']):
+            img = results[key]
+            t, h, w, c = img.shape
+
+            margin_h = max(h - self.crop_size[0], 0)
+            margin_w = max(w - self.crop_size[1], 0)
+            offset_h = np.random.randint(0, margin_h + 1)
+            offset_w = np.random.randint(0, margin_w + 1)
+            crop_y1, crop_y2 = offset_h, offset_h + self.crop_size[0]
+            crop_x1, crop_x2 = offset_w, offset_w + self.crop_size[1]
+
+            # crop the image
+            img = img[:, crop_y1:crop_y2, crop_x1:crop_x2, ...]
+            img_shape = img.shape
+            results[key] = img
+
+        results['img_shape'] = img_shape
+
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__ + f'(crop_size={self.crop_size})'
+
+
+@registry.register_module('pipeline')
+class CenterCrop3d(object):
+    """Random crop the image & bboxes.
+
+    Args:
+        crop_size (tuple): Expected size after cropping, (h, w).
+        allow_negative_crop (bool): Whether to allow a crop that does not
+            contain any bbox area. Default to False.
+
+    Notes:
+        - If the image is smaller than the crop size, return the original image
+        - The keys for bboxes, labels must be aligned. That is,
+          `gt_bboxes` corresponds to `gt_labels`, and
+          `gt_bboxes_ignore` corresponds to `gt_labels_ignore`.
+        - If the crop does not contain any gt-bbox region and
+          `allow_negative_crop` is set to False, skip this image.
+    """
+
+    def __init__(self, crop_size):
+        assert crop_size[0] > 0 and crop_size[1] > 0
+        self.crop_size = crop_size
+        # The key correspondence from bboxes to labels.
+
+    def _get_center_crop_coords(self, height, width, crop_height, crop_width):
+        y1 = (height - crop_height) // 2
+        y2 = y1 + crop_height
+        x1 = (width - crop_width) // 2
+        x2 = x1 + crop_width
+        return x1, y1, x2, y2
+
+    def __call__(self, results):
+        """Call function to randomly crop images, bounding boxes.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Randomly cropped results, 'img_shape' key in result dict is
+                updated according to crop size.
+        """
+
+        for key in results.get('img_fields', ['img']):
+            img = results[key]
+            t, h, w, c = img.shape
+
+            assert h > self.crop_size[0] and w > self.crop_size[1]
+
+            crop_x1, crop_y1, crop_x2, crop_y2 = self._get_center_crop_coords(
+                h, w, self.crop_size[0], self.crop_size[1])
+
+            # crop the image
+            img = img[:, crop_y1:crop_y2, crop_x1:crop_x2, ...]
+            img_shape = img.shape
+            results[key] = img
+
+        results['img_shape'] = img_shape
+
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__ + f'(crop_size={self.crop_size})'
+
+
+@registry.register_module('pipeline')
+class RandomFlip3d(object):
+    """Flip the image & bbox.
+
+    If the input dict contains the key "flip", then the flag will be used,
+    otherwise it will be randomly decided by a ratio specified in the init
+    method.
+
+    Args:
+        flip_ratio (float, optional): The flipping probability. Default: None.
+        direction(str, optional): The flipping direction. Options are
+            'horizontal' and 'vertical'. Default: 'horizontal'.
+    """
+
+    def __init__(self, flip_ratio=0, direction='horizontal'):
+        self.flip_ratio = flip_ratio
+        self.direction = direction
+        if flip_ratio is not None:
+            assert flip_ratio >= 0 and flip_ratio <= 1
+        assert direction in ['horizontal', 'vertical']
+
+    def __call__(self, results):
+        """Call function to flip bounding boxes.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Flipped results, 'flip', 'flip_direction' keys are added into
+                result dict.
+        """
+
+        if 'flip' not in results:
+            flip = True if np.random.rand() < self.flip_ratio else False
+            results['flip'] = flip
+        if 'flip_direction' not in results:
+            results['flip_direction'] = self.direction
+        if results['flip']:
+            # flip image
+            for key in results.get('img_fields', ['img']):
+                assert self.direction in ['horizontal', 'vertical']
+                if self.direction == 'horizontal':
+                    results[key] = np.flip(results[key], axis=2)
+                else:
+                    results[key] = np.flip(results[key], axis=1)
+
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__ + f'(flip_ratio={self.flip_ratio})'
+
+
+@registry.register_module('pipeline')
+class PhotoMetricDistortion3D(object):
+    """Apply photometric distortion to image sequentially, every transformation
+    is applied with a probability of 0.5. The position of random contrast is in
+    second or second to last.
+
+    1. random brightness
+    2. random contrast (mode 0)
+    3. convert color from BGR to HSV
+    4. random saturation
+    5. random hue
+    6. convert color from HSV to BGR
+    7. random contrast (mode 1)
+    8. randomly swap channels
+
+    Args:
+        brightness_delta (int): delta of brightness.
+        contrast_range (tuple): range of contrast.
+        saturation_range (tuple): range of saturation.
+        hue_delta (int): delta of hue.
+    """
+
+    def __init__(self,
+                 brightness_delta=32,
+                 contrast_range=(0.5, 1.5),
+                 saturation_range=(0.5, 1.5),
+                 hue_delta=18,
+                 p=0.5,
+                 mode=1):
+        self.brightness_delta = brightness_delta
+        self.contrast_lower, self.contrast_upper = contrast_range
+        self.saturation_lower, self.saturation_upper = saturation_range
+        self.hue_delta = hue_delta
+        self.p = p
+        self.mode = mode
+
+    def __call__(self, results):
+        """Call function to perform photometric distortion on images.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Result dict with images distorted.
+        """
+
+        if 'img_fields' in results:
+            assert results['img_fields'] == ['img'], \
+                'Only single img_fields is allowed'
+        img = results['img']
+        assert img.dtype == np.float32, \
+            'PhotoMetricDistortion needs the input image of dtype np.float32,'\
+            ' please set "to_float32=True" in "LoadImageFromFile" pipeline'
+
+        def _filter(img):
+            img[img < 0] = 0
+            img[img > 255] = 255
+            return img
+
+        t, h, w, c = img.shape
+
+        if random.uniform(0, 1) <= self.p:
+
+            if self.mode == 0:
+                # random brightness
+                new_img = []
+                for i in range(t):
+                    _img = img[i]
+
+                    if random.randint(2):
+                        delta = random.uniform(-self.brightness_delta,
+                                               self.brightness_delta)
+                        _img += delta
+                        _img = _filter(_img)
+
+                    # mode == 0 --> do random contrast first
+                    # mode == 1 --> do random contrast last
+                    mode = random.randint(2)
+                    if mode == 1:
+                        if random.randint(2):
+                            alpha = random.uniform(self.contrast_lower,
+                                                   self.contrast_upper)
+                            _img *= alpha
+                            _img = _filter(_img)
+
+                    # convert color from BGR to HSV
+                    _img = image.bgr2hsv(_img)
+
+                    # random saturation
+                    if random.randint(2):
+                        _img[..., 1] *= random.uniform(self.saturation_lower,
+                                                       self.saturation_upper)
+
+                    # random hue
+                    if random.randint(2):
+                        _img[..., 0] += random.uniform(-self.hue_delta, self.hue_delta)
+                        _img[..., 0][_img[..., 0] > 360] -= 360
+                        _img[..., 0][_img[..., 0] < 0] += 360
+
+                    # convert color from HSV to BGR
+                    _img = image.hsv2bgr(_img)
+                    _img = _filter(_img)
+
+                    # random contrast
+                    if mode == 0:
+                        if random.randint(2):
+                            alpha = random.uniform(self.contrast_lower,
+                                                   self.contrast_upper)
+                            _img *= alpha
+                            _img = _filter(_img)
+
+                    new_img.append(_img)
+
+                # randomly swap channels
+                # if random.randint(2):
+                #     img = img[..., random.permutation(3)]
+
+                img = np.array(new_img)
+
+            elif self.mode == 1:
+                # random brightness
+                if random.randint(2):
+                    delta = random.uniform(-self.brightness_delta,
+                                           self.brightness_delta)
+                    img += delta
+                    img = _filter(img)
+
+                # mode == 0 --> do random contrast first
+                # mode == 1 --> do random contrast last
+                mode = random.randint(2)
+                if mode == 1:
+                    if random.randint(2):
+                        alpha = random.uniform(self.contrast_lower,
+                                               self.contrast_upper)
+                        img *= alpha
+                        img = _filter(img)
+
+                # convert color from BGR to HSV
+                new_img = []
+                saturation = random.uniform(self.saturation_lower, self.saturation_upper) if random.randint(2) else 1
+                hue = random.uniform(-self.hue_delta, self.hue_delta) if random.randint(2) else 0
+
+                for i in range(t):
+                    _img = img[i]
+
+                    _img = image.bgr2hsv(_img)
+
+                    # random saturation
+                    _img[..., 1] *= saturation
+
+                    # random hue
+                    _img[..., 0] += hue
+                    _img[..., 0][_img[..., 0] > 360] -= 360
+                    _img[..., 0][_img[..., 0] < 0] += 360
+
+                    # convert color from HSV to BGR
+                    _img = image.hsv2bgr(_img)
+                    new_img.append(_img)
+
+                img = np.array(new_img)
+                img = _filter(img)
+
+                # random contrast
+                if mode == 0:
+                    if random.randint(2):
+                        alpha = random.uniform(self.contrast_lower,
+                                               self.contrast_upper)
+                        img *= alpha
+                        img = _filter(img)
+            else:
+                raise NotImplementedError
+
+            results['img'] = img
+        return results
+
+    def __repr__(self):
+        repr_str = self.__class__.__name__
+        repr_str += f'(\nbrightness_delta={self.brightness_delta},\n'
+        repr_str += 'contrast_range='
+        repr_str += f'{(self.contrast_lower, self.contrast_upper)},\n'
+        repr_str += 'saturation_range='
+        repr_str += f'{(self.saturation_lower, self.saturation_upper)},\n'
+        repr_str += f'hue_delta={self.hue_delta})'
         return repr_str
 
 
@@ -450,58 +1066,6 @@ class Resize(object):
 
 
 @registry.register_module('pipeline')
-class RandomFlip3d(object):
-    """Flip the image & bbox.
-
-    If the input dict contains the key "flip", then the flag will be used,
-    otherwise it will be randomly decided by a ratio specified in the init
-    method.
-
-    Args:
-        flip_ratio (float, optional): The flipping probability. Default: None.
-        direction(str, optional): The flipping direction. Options are
-            'horizontal' and 'vertical'. Default: 'horizontal'.
-    """
-
-    def __init__(self, flip_ratio=0, direction='horizontal'):
-        self.flip_ratio = flip_ratio
-        self.direction = direction
-        if flip_ratio is not None:
-            assert flip_ratio >= 0 and flip_ratio <= 1
-        assert direction in ['horizontal', 'vertical']
-
-    def __call__(self, results):
-        """Call function to flip bounding boxes.
-
-        Args:
-            results (dict): Result dict from loading pipeline.
-
-        Returns:
-            dict: Flipped results, 'flip', 'flip_direction' keys are added into
-                result dict.
-        """
-
-        if 'flip' not in results:
-            flip = True if np.random.rand() < self.flip_ratio else False
-            results['flip'] = flip
-        if 'flip_direction' not in results:
-            results['flip_direction'] = self.direction
-        if results['flip']:
-            # flip image
-            for key in results.get('img_fields', ['img']):
-                assert self.direction in ['horizontal', 'vertical']
-                if self.direction == 'horizontal':
-                    results[key] = np.flip(results[key], axis=2)
-                else:
-                    results[key] = np.flip(results[key], axis=1)
-
-        return results
-
-    def __repr__(self):
-        return self.__class__.__name__ + f'(flip_ratio={self.flip_ratio})'
-
-
-@registry.register_module('pipeline')
 class RandomFlip(object):
     """Flip the image & bbox.
 
@@ -676,46 +1240,6 @@ class Normalize(object):
         repr_str = self.__class__.__name__
         repr_str += f'(mean={self.mean}, std={self.std}, to_rgb={self.to_rgb})'
         return repr_str
-
-
-@registry.register_module('pipeline')
-class Normalize3d(object):
-    """Normalize the image.
-
-    Added key is "img_norm_cfg".
-
-    Args:
-        mean (sequence): Mean values of 3 channels.
-        std (sequence): Std values of 3 channels.
-        to_rgb (bool): Whether to convert the image from BGR to RGB,
-            default is true.
-    """
-
-    def __init__(self, mean, std, to_rgb=True):
-        self.mean = np.array(mean, dtype=np.float32)
-        self.std = np.array(std, dtype=np.float32)
-        self.to_rgb = to_rgb
-        self.channel = len(mean)
-
-    def __call__(self, results):
-
-        for key in results.get('img_fields', ['img']):
-            img = results[key]
-            mean = np.reshape(np.array(self.mean, dtype=img.dtype),
-                              [self.channel])
-            std = np.reshape(np.array(self.std, dtype=img.dtype), [self.channel])
-            denominator = np.reciprocal(std, dtype=img.dtype)
-
-            new_img = (img - mean) * denominator
-            results[key] = new_img
-
-        # import cv2
-        # for i in range(256):
-        #     cv2.imwrite(f'{i}.jpg', new_img[i].astype(np.uint8))
-
-        results['img_norm_cfg'] = dict(
-            mean=self.mean, std=self.std, to_rgb=self.to_rgb)
-        return results
 
 
 @registry.register_module('pipeline')

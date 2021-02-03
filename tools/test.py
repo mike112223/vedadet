@@ -14,6 +14,7 @@ def parse_args():
     parser.add_argument('config', help='test config file path')
     parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument('--out', help='output result file in pickle format')
+    parser.add_argument('--iou', type=float, default=0.5, help='iou threshold')
 
     args = parser.parse_args()
     return args
@@ -67,7 +68,7 @@ def main():
         print(f'\nwriting results to {args.out}')
         dump(results, args.out)
 
-    data_loader.dataset.evaluate(results)
+    data_loader.dataset.evaluate(results, iou_thr=args.iou)
 
 
 if __name__ == '__main__':

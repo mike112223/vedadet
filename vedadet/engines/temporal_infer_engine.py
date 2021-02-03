@@ -84,13 +84,13 @@ class TemporalInferEngine(BaseEngine):
         n, c, t, h, w = img.shape
         img = img.permute(0, 2, 1, 3, 4).reshape(
             -1, self.window_size, c, h, w).permute(0, 2, 1, 3, 4)
-        print(img.shape, math.ceil(img.shape[0] / self.max_batch))
+        # print(img.shape, math.ceil(img.shape[0] / self.max_batch))
         dets = []
         for i in range(math.ceil(img.shape[0] / self.max_batch)):
             clip_img = img[i * self.max_batch:(i + 1) * self.max_batch]
             det = self._get_raw_dets(clip_img, img_metas)
+            dets.extend(det)
 
-        dets.extend(det)
         batch_size = len(dets)
 
         result_list = []
